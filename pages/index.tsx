@@ -1,118 +1,164 @@
 import Image from 'next/image'
 import { Inter } from 'next/font/google'
+import { signOut, useSession } from 'next-auth/react'
+import { useEffect, useState } from 'react'
+import TweetForm from '@/components/TweetForm'
+import { Post, User } from '@prisma/client'
+import TweetBox from '@/components/TweetBox'
+import { Router, useRouter } from 'next/router'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export default function Home() {
+  const router = useRouter()
+  const { data: session, status } = useSession({
+    required: true
+  })
+  const [username, setUsername] = useState<string>("")
+  const [profileImage, setProfileImage] = useState<string>("/blank_pp.webp")
+  const [base64, setBase64] = useState<string>("") // image that gets uploaded in new tweet
+  const [txt, setTxt] = useState<string>("") // body of the new tweet
+  const [key, setKey] = useState<number>(0) // key of the tweet form component
+  const [tweets, setTweets] = useState<Array<Post>>([])
+  const [tweetUserData, setTweetUserData] = useState<Array<User>>([])
+  const [loading, setLoading] = useState<boolean>(true)
+
+  async function tweet() {
+    const response = await fetch("/api/post", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        body: txt,
+        userEmail: session?.user?.email,
+        image: base64
+      })
+    })
+    if (response.status == 200) {
+      // fetch the tweets
+      await getTweets()
+      setBase64("") // reset the uploaded image
+      setKey(key + 1) // reset the contenteditable div
+    }
+  }
+
+  async function getTweets() {
+    const response = await fetch("/api/post")
+    if (response.status == 200) {
+      const data = await response.json()
+      setTweets(data.posts)
+      setTweetUserData(data.userData)
+      setLoading(false)
+    }
+  }
+
+  function makeid(length: number) {
+    let result = '';
+    const characters = '0123456789';
+    const charactersLength = characters.length;
+    let counter = 0;
+    while (counter < length) {
+      result += characters.charAt(Math.floor(Math.random() * charactersLength));
+      counter += 1;
+    }
+    return result;
+  }
+
+  async function getUser(email: string) {
+    const params = new URLSearchParams({
+      email: email
+    })
+    const response = await fetch("/api/user?" + params)
+    if (response.status == 200) {
+      const data = await response.json()
+      return data
+    }
+  }
+
+  async function createUser() {
+    const email = session?.user?.email as string
+    const name = session?.user?.name as string
+    const username = session?.user?.name?.split(" ")[0] + "_" + makeid(6) as string
+    const response = await fetch("/api/user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email,
+        name,
+        username,
+        profileImage: "/blank_pp.webp"
+      })
+    })
+    if (response.status == 200) {
+      const data = await response.json()
+      return data
+    }
+  }
+
+  useEffect(() => {
+    async function f() {
+      if (status != "loading" && session) {
+        const data = await getUser(session.user?.email as string)
+        if (data.msg == "new user") {
+          const userData = await createUser()
+          if (userData) {
+            setUsername(userData.user.username)
+            setProfileImage(userData.user.profileImage)
+          }
+        } else {
+          setUsername(data.user.username)
+          setProfileImage(data.user.profileImage)
+        }
+        await getTweets()
+      }
+    }
+    f()
+  }, [status, session])
+
+  if (status == "loading") {
+    return <div>Loading...</div>
+  }
+
   return (
-    <main
-      className={`flex min-h-screen flex-col items-center justify-between p-24 ${inter.className}`}
-    >
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">pages/index.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <div className="flex-grow h-screen overflow-y-scroll bg-black text-white">
+      <header className='sticky top-0 flex w-full z-10'>
+        <div className="backdrop-blur-sm w-full lg:w-3/5 h-16 flex items-center border-b border-neutral-600 px-4">
+          <h1 className='text-lg font-bold'>Home</h1>
         </div>
+        <div className='hidden lg:inline-flex lg:flex-grow self-stretch border-l border-neutral-600'></div>
+      </header>
+      <div className='relative -top-16 w-full flex'>
+        <div className='w-full lg:w-3/5 grow-0 shrink-0'>
+          <div className='flex flex-col pt-16 min-h-screen'>
+            <TweetForm
+              key={key}
+              onSubmit={tweet}
+              txt={txt}
+              setTxt={setTxt}
+              profileImage={profileImage}
+              base64={base64}
+              setBase64={setBase64}
+              label="Submit"
+            />
+            {/* list of tweets */}
+            {loading ? <div className='flex justify-center p-8'>
+              loading...
+            </div> : tweets.map((post: Post, i: number) => (
+              <TweetBox
+                onClick={() => router.push(`/tweet/${post.id}`)}
+                key={post.id}
+                post={post}
+                userData={tweetUserData[i]}
+                userEmail={session.user?.email as string}
+              />
+            ))}
+          </div>
+        </div>
+        <div className='border-l border-neutral-600 flex-grow self-stretch relative top-16'></div>
       </div>
-
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700/10 after:dark:from-sky-900 after:dark:via-[#0141ff]/40 before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Discover and deploy boilerplate example Next.js&nbsp;projects.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+    </div>
   )
 }
